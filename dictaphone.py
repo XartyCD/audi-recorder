@@ -1,20 +1,23 @@
-"""GUI dictaphone: record from mic, name the file, and save to MP3."""
+"""GUI dictaphone: record from mic, choose format, and save audio."""
 from __future__ import annotations
 
 import sys
 import threading
 import time
 from pathlib import Path
-from tkinter import BOTH, DISABLED, NORMAL, Button, Entry, Frame, Label, StringVar, Tk
+from tkinter import BOTH, DISABLED, NORMAL, Button, Entry, Frame, Label, OptionMenu, StringVar, Tk
 
 import lameenc
 import numpy as np
 import sounddevice as sd
+import soundfile as sf
 
 SAMPLE_RATE = 44_100
 CHANNELS = 1
 DTYPE = "int16"
-DEFAULT_START = 555
+# If folders are empty, numbering starts at 1
+DEFAULT_START = 1
+SUPPORTED_FORMATS = ("mp3", "wav", "flac", "ogg")
 SCAN_DIR = Path(r"C:\Users\Иван\Desktop\хрустел")
 OUTPUT_DIR = Path(__file__).resolve().parent / "recordings"
 
@@ -25,6 +28,7 @@ class DictaphoneApp:
         self.root.title("Dictaphone")
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+        self.format_var = StringVar(value=SUPPORTED_FORMATS[0])
         self.last_auto_name = self._default_name()
         self.filename_var = StringVar(value=self.last_auto_name)
         self.status_var = StringVar(value="Ready")
@@ -43,9 +47,15 @@ class DictaphoneApp:
         frame = Frame(self.root, padx=10, pady=10)
         frame.pack(fill=BOTH)
 
-        Label(frame, text="File name (mp3):").pack(anchor="w")
+        Label(frame, text="File name:").pack(anchor="w")
         self.filename_entry = Entry(frame, textvariable=self.filename_var, width=40)
         self.filename_entry.pack(fill="x", pady=(0, 8))
+
+        fmt_frame = Frame(frame)
+        fmt_frame.pack(fill="x", pady=(0, 8))
+        Label(fmt_frame, text="Format:").pack(side="left")
+        self.format_menu = OptionMenu(fmt_frame, self.format_var, self.format_var.get(), *SUPPORTED_FORMATS, command=self._on_format_change)
+        self.format_menu.pack(side="left", padx=(5, 0))
 
         btn_frame = Frame(frame)
         btn_frame.pack(fill="x", pady=(0, 8))
@@ -56,7 +66,7 @@ class DictaphoneApp:
         self.stop_btn = Button(btn_frame, text="Stop", command=self.stop_recording, width=10, state=DISABLED)
         self.stop_btn.pack(side="left", padx=5)
 
-        self.save_btn = Button(btn_frame, text="Save MP3", command=self.save_mp3, width=10, state=DISABLED)
+        self.save_btn = Button(btn_frame, text="Save", command=self.save_audio, width=10, state=DISABLED)
         self.save_btn.pack(side="left")
 
         self.status_label = Label(frame, textvariable=self.status_var, anchor="w")
@@ -111,7 +121,7 @@ class DictaphoneApp:
         self.status_var.set("Recording stopped. Ready to save.")
         self._set_buttons(recording=False, has_audio=True)
 
-    def save_mp3(self) -> None:
+    def save_audio(self) -> None:
         if not self.frames:
             self.status_var.set("Nothing to save. Record first.")
             return
@@ -122,15 +132,18 @@ class DictaphoneApp:
 
     def _save_worker(self, target: Path) -> None:
         audio = np.concatenate(self.frames, axis=0)
+        ext = target.suffix.lstrip(".").lower() or self._ext()
         try:
-            encoder = lameenc.Encoder()
-            encoder.set_bit_rate(128)
-            encoder.set_in_sample_rate(SAMPLE_RATE)
-            encoder.set_channels(CHANNELS)
-            encoder.set_quality(2)
-
-            mp3_data = encoder.encode(audio.tobytes()) + encoder.flush()
-            target.write_bytes(mp3_data)
+            if ext == "mp3":
+                encoder = lameenc.Encoder()
+                encoder.set_bit_rate(128)
+                encoder.set_in_sample_rate(SAMPLE_RATE)
+                encoder.set_channels(CHANNELS)
+                encoder.set_quality(2)
+                mp3_data = encoder.encode(audio.tobytes()) + encoder.flush()
+                target.write_bytes(mp3_data)
+            else:
+                sf.write(target, audio, SAMPLE_RATE, subtype="PCM_16")
         except Exception as exc:  # noqa: BLE001
             self.root.after(0, self.status_var.set, f"Save failed: {exc}")
         else:
@@ -156,28 +169,36 @@ class DictaphoneApp:
 
     def _make_target_path(self) -> Path:
         base_dir = OUTPUT_DIR
+        ext = self._ext()
         name = self.filename_var.get().strip() or self._default_name()
-        if not name.lower().endswith(".mp3"):
-            name += ".mp3"
+        if not name.lower().endswith(f".{ext}"):
+            name += f".{ext}"
         candidate = base_dir / name
         counter = 1
         while candidate.exists():
-            candidate = base_dir / f"{candidate.stem}_{counter}.mp3"
+            candidate = base_dir / f"{candidate.stem}_{counter}.{ext}"
             counter += 1
         return candidate
 
-    @staticmethod
-    def _default_name() -> str:
+    def _default_name(self) -> str:
+        ext = self._ext()
         max_num = DEFAULT_START - 1
         if SCAN_DIR.exists():
-            for path in SCAN_DIR.glob("*.mp3"):
-                stem = path.stem
-                if stem.isdigit():
-                    try:
-                        max_num = max(max_num, int(stem))
-                    except ValueError:
-                        continue
-        return f"{max_num + 1}.mp3"
+            for fmt in SUPPORTED_FORMATS:
+                for path in SCAN_DIR.glob(f"*.{fmt}"):
+                    stem = path.stem
+                    if stem.isdigit():
+                        try:
+                            max_num = max(max_num, int(stem))
+                        except ValueError:
+                            continue
+        return f"{max_num + 1}.{ext}"
+
+    def _ext(self) -> str:
+        ext = (self.format_var.get() or SUPPORTED_FORMATS[0]).lower()
+        if ext not in SUPPORTED_FORMATS:
+            ext = SUPPORTED_FORMATS[0]
+        return ext
 
     def _tick_timer(self) -> None:
         if not self.recording or self.start_time is None:
@@ -203,6 +224,12 @@ class DictaphoneApp:
                 self.last_auto_name = new_default
         finally:
             self._schedule_scan()
+
+    def _on_format_change(self, *_: object) -> None:
+        new_default = self._default_name()
+        if self.filename_var.get().strip() == self.last_auto_name:
+            self.filename_var.set(new_default)
+        self.last_auto_name = new_default
 
 
 def main() -> None:
