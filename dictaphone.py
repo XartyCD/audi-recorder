@@ -5,7 +5,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from tkinter import BOTH, DISABLED, NORMAL, Button, Entry, Frame, Label, OptionMenu, StringVar, Tk
+from tkinter import BOTH, DISABLED, NORMAL, Button, Entry, Frame, Label, OptionMenu, StringVar, Tk, filedialog
 
 import lameenc
 import numpy as np
@@ -37,6 +37,11 @@ class DictaphoneApp:
         self.root.configure(bg=BG)
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+        self.scan_dir = SCAN_DIR
+        self.output_dir = OUTPUT_DIR
+        self.scan_dir_var = StringVar(value=str(self.scan_dir))
+        self.output_dir_var = StringVar(value=str(self.output_dir))
+
         self.format_var = StringVar(value=SUPPORTED_FORMATS[0])
         self.last_auto_name = self._default_name()  # base name without extension
         self.filename_var = StringVar(value=self.last_auto_name)
@@ -63,6 +68,26 @@ class DictaphoneApp:
         card.pack(fill=BOTH)
 
         Label(card, text="Диктофон", bg=CARD_BG, fg=TEXT, font=("Segoe UI Semibold", 14)).pack(anchor="w", pady=(0, 10))
+
+        # Директория сканирования
+        scan_frame = Frame(card, bg=CARD_BG)
+        scan_frame.pack(fill="x", pady=(0, 8))
+        Label(scan_frame, text="Папка для нумерации:", bg=CARD_BG, fg=TEXT, font=FONT).pack(anchor="w")
+        scan_row = Frame(scan_frame, bg=CARD_BG)
+        scan_row.pack(fill="x", pady=(2, 0))
+        self.scan_entry = Entry(scan_row, textvariable=self.scan_dir_var, bg=INPUT_BG, fg=TEXT, relief="flat", font=FONT, highlightthickness=1, highlightbackground=INPUT_BORDER, highlightcolor=ACCENT)
+        self.scan_entry.pack(side="left", fill="x", expand=True)
+        Button(scan_row, text="Выбрать", command=self._choose_scan_dir, bg=ACCENT, fg=BG, relief="flat", bd=0, width=10, font=FONT, activebackground="#6fe2d6", activeforeground=BG).pack(side="left", padx=(8, 0))
+
+        # Директория сохранения
+        out_frame = Frame(card, bg=CARD_BG)
+        out_frame.pack(fill="x", pady=(0, 10))
+        Label(out_frame, text="Папка сохранения:", bg=CARD_BG, fg=TEXT, font=FONT).pack(anchor="w")
+        out_row = Frame(out_frame, bg=CARD_BG)
+        out_row.pack(fill="x", pady=(2, 0))
+        self.out_entry = Entry(out_row, textvariable=self.output_dir_var, bg=INPUT_BG, fg=TEXT, relief="flat", font=FONT, highlightthickness=1, highlightbackground=INPUT_BORDER, highlightcolor=ACCENT)
+        self.out_entry.pack(side="left", fill="x", expand=True)
+        Button(out_row, text="Выбрать", command=self._choose_output_dir, bg=ACCENT, fg=BG, relief="flat", bd=0, width=10, font=FONT, activebackground="#6fe2d6", activeforeground=BG).pack(side="left", padx=(8, 0))
 
         Label(card, text="Имя файла:", bg=CARD_BG, fg=TEXT, font=FONT).pack(anchor="w")
         self.filename_entry = Entry(
@@ -214,7 +239,7 @@ class DictaphoneApp:
         self.save_btn.config(state=NORMAL if has_audio and not recording else DISABLED, bg=ACCENT if (has_audio and not recording) else "#25344a", fg=BG if (has_audio and not recording) else MUTED)
 
     def _make_target_path(self) -> Path:
-        base_dir = OUTPUT_DIR
+        base_dir = self.output_dir
         ext = self._ext()
         base_name = self._safe_name(self.filename_var.get()) or self._default_name()
         candidate = base_dir / f"{base_name}.{ext}"
@@ -226,9 +251,9 @@ class DictaphoneApp:
 
     def _default_name(self) -> str:
         max_num = DEFAULT_START - 1
-        if SCAN_DIR.exists():
+        if self.scan_dir.exists():
             for fmt in SUPPORTED_FORMATS:
-                for path in SCAN_DIR.glob(f"*.{fmt}"):
+                for path in self.scan_dir.glob(f"*.{fmt}"):
                     stem = path.stem
                     if stem.isdigit():
                         try:
@@ -281,6 +306,7 @@ class DictaphoneApp:
         if self.filename_var.get().strip() == self.last_auto_name:
             self._set_filename(new_default)
         self.last_auto_name = new_default
+        self._set_dir_vars()
 
     def _on_name_change(self, *_: object) -> None:
         if self._updating_name:
@@ -300,6 +326,29 @@ class DictaphoneApp:
             self.filename_var.set(value)
         finally:
             self._updating_name = False
+
+    def _choose_scan_dir(self) -> None:
+        chosen = filedialog.askdirectory(title="Выберите папку для нумерации")
+        if not chosen:
+            return
+        self.scan_dir = Path(chosen)
+        self._set_dir_vars()
+        new_default = self._default_name()
+        if self.filename_var.get().strip() == self.last_auto_name:
+            self._set_filename(new_default)
+        self.last_auto_name = new_default
+
+    def _choose_output_dir(self) -> None:
+        chosen = filedialog.askdirectory(title="Выберите папку для сохранения")
+        if not chosen:
+            return
+        self.output_dir = Path(chosen)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self._set_dir_vars()
+
+    def _set_dir_vars(self) -> None:
+        self.scan_dir_var.set(str(self.scan_dir))
+        self.output_dir_var.set(str(self.output_dir))
 
     def _center_window(self) -> None:
         self.root.update_idletasks()
