@@ -1,4 +1,4 @@
-"""GUI dictaphone: record from mic, choose format, and save audio."""
+"""GUI диктофон: записывает с микрофона, выбирает формат и сохраняет аудио."""
 from __future__ import annotations
 
 import sys
@@ -20,18 +20,28 @@ DEFAULT_START = 1
 SUPPORTED_FORMATS = ("mp3", "wav", "flac", "ogg")
 SCAN_DIR = Path(r"C:\Users\Иван\Desktop\хрустел")
 OUTPUT_DIR = Path(__file__).resolve().parent / "recordings"
+BG = "#0b1220"
+CARD_BG = "#111c2f"
+TEXT = "#e8edf5"
+MUTED = "#8aa0bf"
+ACCENT = "#5cd4c4"
+INPUT_BG = "#0f2438"
+INPUT_BORDER = "#1f3651"
+FONT = ("Segoe UI", 10)
 
 
 class DictaphoneApp:
     def __init__(self, root: Tk) -> None:
         self.root = root
-        self.root.title("Dictaphone")
+        self.root.title("Диктофон")
+        self.root.configure(bg=BG)
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
         self.format_var = StringVar(value=SUPPORTED_FORMATS[0])
-        self.last_auto_name = self._default_name()
+        self.last_auto_name = self._default_name()  # base name without extension
         self.filename_var = StringVar(value=self.last_auto_name)
-        self.status_var = StringVar(value="Ready")
+        self.status_var = StringVar(value="Готов")
+        self._updating_name = False
 
         self.frames: list[np.ndarray] = []
         self.stream: sd.InputStream | None = None
@@ -41,35 +51,71 @@ class DictaphoneApp:
         self.scan_job: str | None = None
 
         self._build_ui()
+        self._center_window()
         self._schedule_scan()
+        self.filename_var.trace_add("write", self._on_name_change)
 
     def _build_ui(self) -> None:
-        frame = Frame(self.root, padx=10, pady=10)
-        frame.pack(fill=BOTH)
+        wrapper = Frame(self.root, bg=BG, padx=14, pady=14)
+        wrapper.pack(fill=BOTH)
 
-        Label(frame, text="File name:").pack(anchor="w")
-        self.filename_entry = Entry(frame, textvariable=self.filename_var, width=40)
-        self.filename_entry.pack(fill="x", pady=(0, 8))
+        card = Frame(wrapper, bg=CARD_BG, padx=14, pady=14)
+        card.pack(fill=BOTH)
 
-        fmt_frame = Frame(frame)
-        fmt_frame.pack(fill="x", pady=(0, 8))
-        Label(fmt_frame, text="Format:").pack(side="left")
-        self.format_menu = OptionMenu(fmt_frame, self.format_var, self.format_var.get(), *SUPPORTED_FORMATS, command=self._on_format_change)
-        self.format_menu.pack(side="left", padx=(5, 0))
+        Label(card, text="Диктофон", bg=CARD_BG, fg=TEXT, font=("Segoe UI Semibold", 14)).pack(anchor="w", pady=(0, 10))
 
-        btn_frame = Frame(frame)
-        btn_frame.pack(fill="x", pady=(0, 8))
+        Label(card, text="Имя файла:", bg=CARD_BG, fg=TEXT, font=FONT).pack(anchor="w")
+        self.filename_entry = Entry(
+            card,
+            textvariable=self.filename_var,
+            width=40,
+            bg=INPUT_BG,
+            fg=TEXT,
+            insertbackground=ACCENT,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=INPUT_BORDER,
+            highlightcolor=ACCENT,
+            font=FONT,
+        )
+        self.filename_entry.pack(fill="x", pady=(0, 10))
 
-        self.start_btn = Button(btn_frame, text="Start", command=self.start_recording, width=10)
+        fmt_frame = Frame(card, bg=CARD_BG)
+        fmt_frame.pack(fill="x", pady=(0, 10))
+        Label(fmt_frame, text="Формат:", bg=CARD_BG, fg=MUTED, font=FONT).pack(side="left")
+        self.format_menu = OptionMenu(fmt_frame, self.format_var, *SUPPORTED_FORMATS, command=self._on_format_change)
+        self.format_menu.config(
+            bg=INPUT_BG,
+            fg=TEXT,
+            activebackground=ACCENT,
+            activeforeground=BG,
+            highlightthickness=0,
+            relief="flat",
+            font=FONT,
+        )
+        self.format_menu["menu"].config(bg=INPUT_BG, fg=TEXT, activebackground=ACCENT, activeforeground=BG, font=FONT)
+        self.format_menu.pack(side="left", padx=(8, 0))
+
+        btn_frame = Frame(card, bg=CARD_BG)
+        btn_frame.pack(fill="x", pady=(0, 10))
+
+        btn_opts = dict(
+            width=12,
+            relief="flat",
+            bd=0,
+            font=FONT,
+            activeforeground=BG,
+        )
+        self.start_btn = Button(btn_frame, text="Запись", command=self.start_recording, bg=ACCENT, fg=BG, activebackground="#6fe2d6", **btn_opts)
         self.start_btn.pack(side="left")
 
-        self.stop_btn = Button(btn_frame, text="Stop", command=self.stop_recording, width=10, state=DISABLED)
-        self.stop_btn.pack(side="left", padx=5)
+        self.stop_btn = Button(btn_frame, text="Стоп", command=self.stop_recording, state=DISABLED, bg="#25344a", fg=MUTED, activebackground="#2f496b", **btn_opts)
+        self.stop_btn.pack(side="left", padx=6)
 
-        self.save_btn = Button(btn_frame, text="Save", command=self.save_audio, width=10, state=DISABLED)
+        self.save_btn = Button(btn_frame, text="Сохранить", command=self.save_audio, state=DISABLED, bg="#25344a", fg=MUTED, activebackground="#2f496b", **btn_opts)
         self.save_btn.pack(side="left")
 
-        self.status_label = Label(frame, textvariable=self.status_var, anchor="w")
+        self.status_label = Label(card, textvariable=self.status_var, anchor="w", bg=CARD_BG, fg=MUTED, font=FONT)
         self.status_label.pack(fill="x")
 
     def start_recording(self) -> None:
@@ -78,7 +124,7 @@ class DictaphoneApp:
         self.frames.clear()
         self.recording = True
         self.start_time = time.time()
-        self.status_var.set("Recording... Press Stop (00:00)")
+        self.status_var.set("Идёт запись... Остановить (00:00)")
         self._set_buttons(recording=True)
         try:
             self.stream = sd.InputStream(
@@ -90,7 +136,7 @@ class DictaphoneApp:
             self.stream.start()
             self._tick_timer()
         except Exception as exc:  # noqa: BLE001
-            self.status_var.set(f"Audio error: {exc}")
+            self.status_var.set(f"Ошибка аудио: {exc}")
             self._set_buttons(recording=False)
             self.stream = None
             self.recording = False
@@ -98,7 +144,7 @@ class DictaphoneApp:
 
     def _audio_callback(self, indata, frames, time_info, status) -> None:
         if status:
-            print(f"Audio device warning: {status}", file=sys.stderr)
+            print(f"Предупреждение аудиоустройства: {status}", file=sys.stderr)
         self.frames.append(indata.copy())
 
     def stop_recording(self) -> None:
@@ -115,18 +161,18 @@ class DictaphoneApp:
             self.root.after_cancel(self.timer_job)
             self.timer_job = None
         if not self.frames:
-            self.status_var.set("No audio captured. Try again.")
+            self.status_var.set("Звук не записан. Попробуйте снова.")
             self._set_buttons(recording=False, has_audio=False)
             return
-        self.status_var.set("Recording stopped. Ready to save.")
+        self.status_var.set("Запись остановлена. Можно сохранять.")
         self._set_buttons(recording=False, has_audio=True)
 
     def save_audio(self) -> None:
         if not self.frames:
-            self.status_var.set("Nothing to save. Record first.")
+            self.status_var.set("Нечего сохранять — сделайте запись.")
             return
         target = self._make_target_path()
-        self.status_var.set(f"Saving to {target.name} ...")
+        self.status_var.set(f"Сохраняю в {target.name} ...")
         self._set_buttons(enabled=False)
         threading.Thread(target=self._save_worker, args=(target,), daemon=True).start()
 
@@ -145,13 +191,13 @@ class DictaphoneApp:
             else:
                 sf.write(target, audio, SAMPLE_RATE, subtype="PCM_16")
         except Exception as exc:  # noqa: BLE001
-            self.root.after(0, self.status_var.set, f"Save failed: {exc}")
+            self.root.after(0, self.status_var.set, f"Ошибка сохранения: {exc}")
         else:
-            self.root.after(0, self.status_var.set, f"Saved: {target.name}")
+            self.root.after(0, self.status_var.set, f"Сохранено: {target.name}")
             self.frames.clear()
             next_name = self._default_name()
             self.last_auto_name = next_name
-            self.root.after(0, self.filename_var.set, next_name)
+            self.root.after(0, self._set_filename, next_name)
         finally:
             self.root.after(0, self._set_buttons, False, False, True)
 
@@ -161,19 +207,17 @@ class DictaphoneApp:
             self.stop_btn.config(state=DISABLED)
             self.save_btn.config(state=DISABLED)
             return
-        self.start_btn.config(state=DISABLED if recording else NORMAL)
-        self.stop_btn.config(state=NORMAL if recording else DISABLED)
+        self.start_btn.config(state=DISABLED if recording else NORMAL, bg=ACCENT if not recording else "#1f9f91", fg=BG if not recording else BG)
+        self.stop_btn.config(state=NORMAL if recording else DISABLED, bg="#f25f5c" if recording else "#25344a", fg=BG if recording else MUTED)
         if has_audio is None:
             has_audio = bool(self.frames)
-        self.save_btn.config(state=NORMAL if has_audio and not recording else DISABLED)
+        self.save_btn.config(state=NORMAL if has_audio and not recording else DISABLED, bg=ACCENT if (has_audio and not recording) else "#25344a", fg=BG if (has_audio and not recording) else MUTED)
 
     def _make_target_path(self) -> Path:
         base_dir = OUTPUT_DIR
         ext = self._ext()
-        name = self.filename_var.get().strip() or self._default_name()
-        if not name.lower().endswith(f".{ext}"):
-            name += f".{ext}"
-        candidate = base_dir / name
+        base_name = self._safe_name(self.filename_var.get()) or self._default_name()
+        candidate = base_dir / f"{base_name}.{ext}"
         counter = 1
         while candidate.exists():
             candidate = base_dir / f"{candidate.stem}_{counter}.{ext}"
@@ -181,7 +225,6 @@ class DictaphoneApp:
         return candidate
 
     def _default_name(self) -> str:
-        ext = self._ext()
         max_num = DEFAULT_START - 1
         if SCAN_DIR.exists():
             for fmt in SUPPORTED_FORMATS:
@@ -192,7 +235,7 @@ class DictaphoneApp:
                             max_num = max(max_num, int(stem))
                         except ValueError:
                             continue
-        return f"{max_num + 1}.{ext}"
+        return f"{max_num + 1}"
 
     def _ext(self) -> str:
         ext = (self.format_var.get() or SUPPORTED_FORMATS[0]).lower()
@@ -200,12 +243,20 @@ class DictaphoneApp:
             ext = SUPPORTED_FORMATS[0]
         return ext
 
+    @staticmethod
+    def _safe_name(raw: str) -> str:
+        allowed = []
+        for ch in raw:
+            if ch.isalnum() or ch in ("_", "-", " "):
+                allowed.append(ch)
+        return "".join(allowed).strip()
+
     def _tick_timer(self) -> None:
         if not self.recording or self.start_time is None:
             return
         elapsed = int(time.time() - self.start_time)
         minutes, seconds = divmod(elapsed, 60)
-        self.status_var.set(f"Recording... Press Stop ({minutes:02d}:{seconds:02d})")
+        self.status_var.set(f"Идёт запись... Остановить ({minutes:02d}:{seconds:02d})")
         self.timer_job = self.root.after(200, self._tick_timer)
 
     def _schedule_scan(self) -> None:
@@ -220,7 +271,7 @@ class DictaphoneApp:
                 and current == self.last_auto_name
                 and new_default != self.last_auto_name
             ):
-                self.filename_var.set(new_default)
+                self._set_filename(new_default)
                 self.last_auto_name = new_default
         finally:
             self._schedule_scan()
@@ -228,8 +279,37 @@ class DictaphoneApp:
     def _on_format_change(self, *_: object) -> None:
         new_default = self._default_name()
         if self.filename_var.get().strip() == self.last_auto_name:
-            self.filename_var.set(new_default)
+            self._set_filename(new_default)
         self.last_auto_name = new_default
+
+    def _on_name_change(self, *_: object) -> None:
+        if self._updating_name:
+            return
+        name = self.filename_var.get().strip()
+        if not name:
+            return
+        sanitized = self._safe_name(name)
+        if not sanitized:
+            sanitized = self.last_auto_name or self._default_name()
+        if sanitized != name:
+            self._set_filename(sanitized)
+
+    def _set_filename(self, value: str) -> None:
+        self._updating_name = True
+        try:
+            self.filename_var.set(value)
+        finally:
+            self._updating_name = False
+
+    def _center_window(self) -> None:
+        self.root.update_idletasks()
+        width = self.root.winfo_width()
+        height = self.root.winfo_height()
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        x = (screen_w - width) // 2
+        y = (screen_h - height) // 2
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
 
 
 def main() -> None:
